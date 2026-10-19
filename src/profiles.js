@@ -8,6 +8,7 @@ import { createOAuth } from "./oauth.js";
 import { readSettings } from "./settings.js";
 import { createEngine } from "./engine.js";
 import { createSkills } from "./skills.js";
+import { createSupport } from "./support.js";
 
 export function createProfiles({ config, registry, telegram }) {
   registry.db
@@ -83,6 +84,12 @@ export function createProfiles({ config, registry, telegram }) {
       oauth,
       engine,
       skills,
+      support: createSupport({
+        config: ownConfig,
+        store,
+        telegram,
+        getSettings,
+      }),
       getSettings,
     };
     contexts.set(id, ctx);

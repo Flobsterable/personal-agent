@@ -1,6 +1,7 @@
 import { ask, authorizeSideEffect } from "./llm.js";
 import { runTool } from "./tools.js";
 import { readSettings } from "./settings.js";
+import { supportButton } from "./support.js";
 const help =
   "Я персональный ассистент. Напишите задачу обычным текстом.\n/tasks — задачи\n/notes — заметки\n/reminders — напоминания\n/settings — настройки и календари\n/inbox — входящие сообщения\n/contacts — доступные получатели\n/outbox — черновики и статусы\n/approve ID — отправить точный черновик\n/cancel ID — отменить черновик\n/alias CHAT_ID Имя — назвать контакт\n/clearhistory — очистить историю диалога";
 export function createEngine({
@@ -133,7 +134,11 @@ export function createEngine({
       return telegram.send(m.chat.id, "Сообщение передано владельцу.");
     }
     store.set("owner_chat", m.chat.id);
-    if (["/start", "/help"].includes(text)) return ownerSend(help);
+    if (["/start", "/help"].includes(text))
+      return ownerSend(
+        help + "\n/support — AI-поддержка\n/back — вернуться к агенту",
+        supportButton,
+      );
     if (text === "/settings" || text === "/start settings") {
       if (!config.publicBaseUrl)
         return ownerSend(
@@ -142,6 +147,7 @@ export function createEngine({
       return ownerSend("Настройки персонального агента", {
         reply_markup: {
           inline_keyboard: [
+            ...supportButton.reply_markup.inline_keyboard,
             [
               {
                 text: "Открыть настройки",

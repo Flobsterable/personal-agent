@@ -55,7 +55,12 @@ test("multi-user Mini App sessions cannot select another profile or survive paus
     vaultKey: "",
     publicBaseUrl: "https://agent.example",
   };
-  const profiles = createProfiles({ config, registry, telegram: {} });
+  const supportSends = [];
+  const profiles = createProfiles({
+    config,
+    registry,
+    telegram: { send: async (id) => supportSends.push(String(id)) },
+  });
   profiles.register({ id: 1 });
   profiles.register({ id: 2 });
   const server = createMiniAppServer({
@@ -102,7 +107,16 @@ test("multi-user Mini App sessions cannot select another profile or survive paus
     ).json();
     assert.equal(other.profile.id, "2");
     assert.equal(other.settings.timeZone, "UTC");
+    assert.equal((await request("/api/support", {})).status, 401);
+    assert.equal(
+      (await request("/api/support?user=1", {}, b.token)).status,
+      200,
+    );
+    assert.deepEqual(supportSends, ["2"]);
+    assert.equal(profiles.get(1).support.active(), false);
+    assert.equal(profiles.get(2).support.active(), true);
     profiles.pause(1);
+    assert.equal((await request("/api/support", {}, a.token)).status, 403);
     assert.equal(
       (await request("/api/settings", null, a.token, "GET")).status,
       403,
