@@ -5,8 +5,36 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.js";
 import { createSupport } from "../src/support.js";
+import {
+  formatSupportContext,
+  loadSupportDocs,
+  searchSupportDocs,
+} from "../src/support-kb.js";
 import { createProfiles } from "../src/profiles.js";
 import { createRouter } from "../src/router.js";
+
+test("support knowledge base loads markdown and retrieves relevant sections", () => {
+  const docs = loadSupportDocs();
+  assert.ok(docs.length >= 20);
+  assert.match(
+    searchSupportDocs("Как создать встречу в календаре?")[0].id,
+    /^03-meetings-and-calendars#/,
+  );
+  assert.match(
+    searchSupportDocs("Бот не видит сообщения группы")[0].id,
+    /^02-groups-and-memory#/,
+  );
+  assert.match(
+    searchSupportDocs("Как загрузить старый JSON архив?")[0].id,
+    /^05-history-import#/,
+  );
+  assert.deepEqual(searchSupportDocs("квантовый фотосинтез марсохода"), []);
+  const context = formatSupportContext(
+    searchSupportDocs("подключить Google календарь"),
+  );
+  assert.match(context, /\[03-meetings-and-calendars#/);
+  assert.ok(context.length <= 12000);
+});
 
 test("support has separate bounded context and only allowlisted diagnostics", async (t) => {
   const store = new Store(":memory:");
@@ -24,6 +52,14 @@ test("support has separate bounded context and only allowlisted diagnostics", as
       password: "SECRET_PASSWORD",
       defaultCalendarId: "PRIVATE_CALENDAR",
     }),
+    searchDocs: () => [
+      {
+        id: "safe#section",
+        title: "Safe documentation",
+        heading: "Section",
+        body: "Only this support fact is available.",
+      },
+    ],
     decide: async (config, messages) => {
       context = messages;
       return { action: "answer", args: { text: "Проверьте /settings" } };
@@ -41,6 +77,7 @@ test("support has separate bounded context and only allowlisted diagnostics", as
   ])
     assert.ok(!serialized.includes(value));
   assert.match(serialized, /calendarSelected/);
+  assert.match(serialized, /safe#section/);
   assert.equal(JSON.parse(store.get("support_history")).length, 12);
   assert.equal(store.history().length, 1);
   assert.ok(sent.every(([id]) => id === "1"));
