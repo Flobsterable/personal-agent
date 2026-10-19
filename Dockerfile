@@ -5,5 +5,6 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY src ./src
 COPY web ./web
 COPY docs ./docs
+COPY skills ./skills
 USER node
 CMD ["node", "src/main.js"]

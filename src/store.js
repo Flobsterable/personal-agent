@@ -16,6 +16,9 @@ export class Store {
     CREATE TABLE IF NOT EXISTS outbox(id TEXT PRIMARY KEY,chat_id TEXT,text TEXT,status TEXT,expires INTEGER,message_id INTEGER);
     UPDATE outbox SET status='uncertain' WHERE status='sending';
     UPDATE reminders SET status='uncertain' WHERE status='sending';`);
+    if (!this.db.prepare("PRAGMA table_info(tasks)").all().some(c => c.name === "record_id"))
+      this.db.exec("ALTER TABLE tasks ADD COLUMN record_id TEXT");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS tasks_record ON tasks(record_id) WHERE record_id IS NOT NULL");
   }
   close() {
     this.db.close();
@@ -137,7 +140,7 @@ export class Store {
     this.checkQuota("tasks");
     const id = randomUUID();
     this.db
-      .prepare("INSERT INTO tasks VALUES(?,?,0,?)")
+      .prepare("INSERT INTO tasks(id,text,done,created) VALUES(?,?,0,?)")
       .run(id, text, Date.now());
     return { id, text };
   }

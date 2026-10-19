@@ -13,6 +13,7 @@ import { createSupport } from "./support.js";
 export function createProfiles({ config, registry, telegram }) {
   registry.db
     .exec(`CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY,name TEXT,active INTEGER);
+    CREATE TABLE IF NOT EXISTS chat_migrations(old_chat TEXT PRIMARY KEY,new_chat TEXT);
     CREATE TABLE IF NOT EXISTS subscriptions(chat TEXT,user TEXT,PRIMARY KEY(chat,user));`);
   const contexts = new Map(),
     tickets = new Map(),
@@ -142,7 +143,9 @@ export function createProfiles({ config, registry, telegram }) {
     };
   }
   function subscribe(chat, id) {
+    chat = currentChat(chat);
     if (!known(id)) throw new Error("Unknown user");
+    if (registry.db.prepare("SELECT 1 FROM subscriptions WHERE chat=? AND user=?").get(String(chat),String(id))) return;
     if (
       registry.db
         .prepare("SELECT count(*) AS n FROM subscriptions WHERE user=?")
@@ -154,6 +157,7 @@ export function createProfiles({ config, registry, telegram }) {
       .run(String(chat), String(id));
   }
   function subscribers(chat) {
+    chat = currentChat(chat);
     return registry.db
       .prepare(
         "SELECT user FROM subscriptions JOIN profiles ON user=id WHERE chat=? AND active=1",
@@ -161,10 +165,31 @@ export function createProfiles({ config, registry, telegram }) {
       .all(String(chat))
       .map((x) => x.user);
   }
+  function currentChat(chat) {
+    chat = String(chat);
+    for (let i = 0; i < 8; i++) {
+      const row = registry.db.prepare("SELECT new_chat FROM chat_migrations WHERE old_chat=?").get(chat);
+      if (!row) break;
+      chat = row.new_chat;
+    }
+    return chat;
+  }
+  function migrateChat(oldChat, newChat) {
+    oldChat = String(oldChat); newChat = String(newChat);
+    if (!/^-[0-9]+$/.test(oldChat) || !/^-[0-9]+$/.test(newChat) || oldChat === newChat)
+      throw new Error("Invalid chat migration");
+    registry.db.exec("BEGIN IMMEDIATE");
+    try {
+      registry.db.prepare("INSERT INTO chat_migrations VALUES(?,?) ON CONFLICT(old_chat) DO UPDATE SET new_chat=excluded.new_chat").run(oldChat, newChat);
+      registry.db.prepare("INSERT OR IGNORE INTO subscriptions SELECT ?,user FROM subscriptions WHERE chat=?").run(newChat, oldChat);
+      registry.db.prepare("DELETE FROM subscriptions WHERE chat=?").run(oldChat);
+      registry.db.exec("COMMIT");
+    } catch (error) { registry.db.exec("ROLLBACK"); throw error; }
+  }
   function unsubscribe(chat, id) {
     registry.db
       .prepare("DELETE FROM subscriptions WHERE chat=? AND user=?")
-      .run(String(chat), String(id));
+      .run(currentChat(chat), String(id));
   }
   function pause(id) {
     registry.db
@@ -190,6 +215,7 @@ export function createProfiles({ config, registry, telegram }) {
     oauthRouter,
     subscribe,
     subscribers,
+    migrateChat,
     unsubscribe,
     pause,
     active,

@@ -47,6 +47,11 @@ await telegram.call("setMyCommands", {
     { command: "settings", description: "Настройки и календари" },
     { command: "plan", description: "Планы и встречи" },
     { command: "history", description: "История выполнения" },
+    { command: "summary", description: "Сводка дел и обсуждений" },
+    { command: "status", description: "Проверить сбор и разбор сообщений" },
+    { command: "task", description: "Добавить задачу в личке" },
+    { command: "tasks", description: "Открытые задачи" },
+    { command: "done", description: "Закрыть задачу: ID и результат" },
     { command: "skills", description: "Навыки агента" },
     { command: "track", description: "Подключить обсуждение группы" },
     { command: "untrack", description: "Остановить обработку группы" },
@@ -80,7 +85,7 @@ try {
         {
           offset: Number(store.get("offset") || 0),
           timeout: 25,
-          allowed_updates: ["message", "edited_message", "callback_query"],
+          allowed_updates: ["message", "edited_message", "callback_query", "my_chat_member"],
         },
         controller.signal,
       );

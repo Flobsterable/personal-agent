@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import { syncTaskRecord } from "./task-tracking.js";
 
 // One database per profile. Raw conversations have a short, bounded lifetime;
 // durable decisions and their audit trail are never silently evicted.
@@ -14,6 +15,9 @@ export class Knowledge {
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,record TEXT,action TEXT,description TEXT,created INTEGER);
       CREATE TABLE IF NOT EXISTS delivery(key TEXT PRIMARY KEY,status TEXT,created INTEGER);
       UPDATE delivery SET status='uncertain' WHERE status='sending';`);
+    // Bring already extracted tasks into the actual task list on upgrade.
+    for (const record of this.db.prepare("SELECT * FROM records WHERE kind='task'").all())
+      syncTaskRecord(this.db, record);
   }
   capacity() {
     return (
@@ -47,6 +51,22 @@ export class Knowledge {
         "SELECT msg,sender,text FROM discussion WHERE chat=? ORDER BY created,msg",
       )
       .all(String(chat));
+  }
+  recent({ chat = null, text = "", offset = 0 } = {}) {
+    if (!Number.isInteger(offset) || offset < 0 || offset > 2560 ||
+        typeof text !== "string" || text.length > 200)
+      throw new Error("Invalid discussion query");
+    const where = "(? IS NULL OR chat=?) AND fold(text) LIKE ?";
+    const params = [chat == null ? null : String(chat), chat == null ? null : String(chat),
+      "%" + text.toLocaleLowerCase("ru") + "%"];
+    const total = this.db.prepare("SELECT count(*) AS n FROM discussion WHERE " + where)
+      .get(...params).n;
+    const items = this.db.prepare(
+      "SELECT chat,msg,sender,text,created FROM discussion WHERE " + where +
+      " ORDER BY created DESC,chat,msg DESC LIMIT 5 OFFSET ?",
+    ).all(...params, offset);
+    return { items, total, nextOffset: offset + items.length < total ? offset + items.length : null,
+      warning: "Только сохранённый недавний буфер: до 80 сообщений на чат, с ограниченным сроком хранения. Это не вся история Telegram." };
   }
   list(chat = null, kind = null) {
     return this.db
@@ -97,8 +117,10 @@ export class Knowledge {
       )
     )
       throw new Error("Invalid record");
-    if (old && Object.entries(data).every(([k, v]) => old[k] === v))
+    if (old && Object.entries(data).every(([k, v]) => old[k] === v)) {
+      syncTaskRecord(this.db, old);
       return { record: old, changed: false };
+    }
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db
@@ -143,6 +165,7 @@ export class Knowledge {
           }),
           now,
         );
+      syncTaskRecord(this.db, this.record(id, chat));
       this.db.exec("COMMIT");
     } catch (e) {
       this.db.exec("ROLLBACK");

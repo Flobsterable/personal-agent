@@ -10,6 +10,8 @@ import { createRouter } from "../src/router.js";
 import { createSkills, validateChanges } from "../src/skills.js";
 import { importDiscussion, parseTelegramExport } from "../src/import.js";
 import { saveSettings, readSettings } from "../src/settings.js";
+import { createEngine } from "../src/engine.js";
+import { ask } from "../src/llm.js";
 const task = {
   kind: "task",
   title: "Подготовить релиз",
@@ -17,6 +19,204 @@ const task = {
   start: "2027-04",
   status: "planned",
 };
+test("what needs doing includes group tasks even when personal tasks are empty and exposes recent unprocessed messages", async () => {
+  const store=new Store(":memory:"), knowledge=new Knowledge(store), sent=[];
+  try {
+    knowledge.observe(-1,1,1,"Нужно купить продукты в выходные");
+    knowledge.observe(-1,2,1,"Нужно забрать заказ");
+    knowledge.upsert(-1,{kind:"task",title:"Купить продукты в выходные",status:"planned"},[{msg:1,quote:"купить продукты"}]);
+    store.remember("assistant","Список дел пуст.");
+    let calls=0;
+    const engine=createEngine({config:{ownerId:"1"},store,knowledge,
+      telegram:{send:async(id,text)=>sent.push(text)},
+      askAgent:(config,db,text,options)=>ask(config,db,text,{...options,decide:async(c,messages)=>{
+        if(calls++===0){
+          const snapshot=JSON.parse(messages.at(-2).content).profileMemory;
+          assert.equal(snapshot.tasks.length,1);
+          assert.equal(snapshot.discussionRecords.items[0].title,"Купить продукты в выходные");
+          assert.ok(snapshot.recentMessages.items.some(m=>m.text.includes("забрать заказ")));
+          return {action:"tasks",args:{}};
+        }
+        const result=JSON.parse(messages.at(-1).content).toolResult;
+        assert.equal(result.tasks.length,1);
+        assert.equal(result.discussionTasks.total,1);
+        return {action:"answer",args:{text:"Купить продукты в выходные; забрать заказ."}};
+      }}),
+    });
+    const message=(id,text)=>({update_id:id,message:{message_id:id,from:{id:1},chat:{id:1,type:"private"},text}});
+    await engine.handle(message(1,"что нужно сделать?"));
+    assert.match(sent.at(-1),/Купить продукты/);
+    await engine.handle(message(2,"/tasks"));
+    assert.match(sent.at(-1),/Купить продукты/);
+    assert.match(sent.at(-1),/\/done ID/);
+  }finally{store.close();}
+});
+test("bot promotion subscribes a registered admin and migration retains collection under the new chat ID", async () => {
+  const directory=mkdtempSync(join(tmpdir(),"personal-migration-"));
+  const registry=new Store(":memory:");
+  const config={dataDir:directory,maxProfiles:2,timeZone:"UTC",vaultKey:"",botId:99};
+  const telegram={send:async()=>{},call:async()=>({status:"creator"})};
+  const profiles=createProfiles({config,registry,telegram});
+  const router=createRouter({config,registry,profiles,telegram});
+  try {
+    profiles.register({id:1});
+    await router.handle({update_id:1,my_chat_member:{chat:{id:-1,type:"group"},from:{id:1},
+      old_chat_member:{status:"member"},new_chat_member:{status:"administrator"}}});
+    assert.deepEqual(profiles.subscribers(-1),["1"]);
+    profiles.subscribe(-2,1);
+    // Telegram service sender is a bot and has no profile.
+    await router.handle({update_id:2,message:{message_id:1,from:{id:1087968824,is_bot:true},
+      chat:{id:-1,type:"group"},migrate_to_chat_id:-1001}});
+    assert.deepEqual(profiles.subscribers(-1001),["1"]);
+    assert.deepEqual(profiles.subscribers(-1),["1"],"old analysis jobs remain authorized");
+    assert.deepEqual(profiles.subscribers(-2),["1"]);
+    await router.handle({update_id:3,message:{message_id:2,from:{id:1087968824,is_bot:true},
+      chat:{id:-1001,type:"supergroup"},migrate_from_chat_id:-1}});
+    await router.handle({update_id:4,message:{message_id:3,from:{id:2},
+      chat:{id:-1001,type:"supergroup"},text:"Нужно купить продукты в выходные"}});
+    assert.equal(profiles.get(1).knowledge.discussion(-1001)[0].text,"Нужно купить продукты в выходные");
+    assert.ok(profiles.get(1).store.get("discussion_job:-1001"));
+    assert.equal(registry.db.prepare("SELECT count(*) AS n FROM subscriptions WHERE chat='-1'").get().n,0);
+    profiles.unsubscribe(-1,1);
+    assert.deepEqual(profiles.subscribers(-1001),[]);
+    await router.handle({update_id:5,my_chat_member:{chat:{id:-1001,type:"supergroup"},from:{id:1},
+      old_chat_member:{status:"administrator"},new_chat_member:{status:"administrator"}}});
+    assert.deepEqual(profiles.subscribers(-1001),[],"rights edits must not undo /untrack");
+  } finally {profiles.close();registry.close();rmSync(directory,{recursive:true,force:true});}
+});
+test("private summary reads raw group messages before extraction, with profile isolation and pagination", async () => {
+  const store = new Store(":memory:"), other = new Store(":memory:");
+  const knowledge = new Knowledge(store), foreign = new Knowledge(other), sent = [];
+  try {
+    for (let i = 1; i <= 6; i++) knowledge.observe("-1", i, "2", "Релиз: сборка " + i);
+    foreign.observe("-2", 1, "3", "Чужой секрет");
+    const first = knowledge.recent({ text: "РЕЛИЗ" });
+    assert.equal(first.total, 6);
+    assert.equal(first.items.length, 5);
+    assert.equal(first.nextOffset, 5);
+    assert.equal(knowledge.recent({ offset: first.nextOffset }).items.length, 1);
+    assert.equal(knowledge.recent({ chat: "-2" }).total, 0);
+    assert.throws(() => knowledge.recent({ offset: -1 }));
+    let step = 0;
+    const engine = createEngine({
+      config: { ownerId: "1" }, store, knowledge,
+      telegram: { send: async (id, text) => sent.push(text) },
+      askAgent: (config, db, text, options) => ask(config, db, text, {
+        ...options,
+        decide: async (c, messages) => {
+          if (step++ === 0) {
+            assert.match(messages[0].content, /discussion_messages/);
+            assert.match(messages.at(-1).content, /Составь сводку/);
+            return { action: "discussion_records", args: {} };
+          }
+          if (step === 2) {
+            assert.equal(JSON.parse(messages.at(-1).content).toolResult.total, 0);
+            return { action: "discussion_messages", args: { text: "РЕЛИЗ" } };
+          }
+          const result = JSON.parse(messages.at(-1).content).toolResult;
+          assert.equal(result.total, 6);
+          assert.ok(result.items.every((m) => m.chat === "-1"));
+          assert.match(result.warning, /не вся история/);
+          return { action: "answer", args: { text: "Релиз: проверка сборки. Показана часть переписки." } };
+        },
+      }),
+    });
+    await engine.handle({ update_id: 1, message: { message_id: 1,
+      from: { id: 1 }, chat: { id: 1, type: "private" }, text: "/summary" } });
+    assert.match(sent.at(-1), /Релиз/);
+  } finally { store.close(); other.close(); }
+});
+
+test("failed background extraction retries without another message, preserves concurrent messages and reports status", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "personal-retry-"));
+  const registry = new Store(":memory:"), sent = [];
+  const config = { dataDir: directory, maxProfiles: 2, timeZone: "UTC", vaultKey: "" };
+  const telegram = { send: async (id, text) => sent.push({ id, text }),
+    call: async (method) => method === "getMe" ? { id: 99, can_read_all_group_messages: false } : { status: "member" } };
+  const profiles = createProfiles({ config, registry, telegram });
+  const router = createRouter({ config, registry, profiles, telegram });
+  const key = "discussion_job:-1";
+  try {
+    const ctx = profiles.register({ id: 1 });
+    profiles.subscribe(-1, 1);
+    // An unregistered group participant must still be collected for its subscriber.
+    await router.handle({ update_id: 1, message: { message_id: 1, from: { id: 2 },
+      chat: { id: -1, type: "group" }, text: "Готовим релиз" } });
+    assert.equal(ctx.knowledge.discussion(-1).length, 1);
+    ctx.store.set(key, JSON.stringify({ first: Date.now() - 60001, last: Date.now() - 16000 }));
+    let attempts = 0;
+    ctx.skills.tick = async () => {};
+    ctx.skills.analyze = async () => { attempts++; throw new Error("Model unavailable"); };
+    await router.tick();
+    let job = JSON.parse(ctx.store.get(key));
+    assert.equal(job.attempts, 1);
+    assert.ok(job.retryAt > Date.now());
+    await router.tick();
+    assert.equal(attempts, 1);
+    await router.handle({ update_id: 2, message: { message_id: 2, from: { id: 1 },
+      chat: { id: 1, type: "private" }, text: "/status" } });
+    assert.match(sent.at(-1).text, /Подключено групп: 1/);
+    assert.match(sent.at(-1).text, /сообщений в буфере 1/);
+    assert.match(sent.at(-1).text, /ошибка анализа, повтор/);
+    assert.match(sent.at(-1).text, /ограничено privacy mode/);
+    assert.equal(ctx.knowledge.discussion("private").length, 0);
+    ctx.store.set(key, JSON.stringify({ ...job, retryAt: 0 }));
+    ctx.skills.analyze = async () => {
+      attempts++;
+      await router.handle({ update_id: 3, message: { message_id: 3, from: { id: 2 },
+        chat: { id: -1, type: "group" }, text: "Проверить тесты" } });
+    };
+    await router.tick();
+    assert.equal(attempts, 2);
+    assert.ok(ctx.store.get(key), "concurrent message must retain its analysis job");
+    ctx.skills.analyze = async () => { attempts++; };
+    job = JSON.parse(ctx.store.get(key));
+    ctx.store.set(key, JSON.stringify({ ...job, first: Date.now() - 60001, retryAt: 0 }));
+    await router.tick();
+    assert.equal(attempts, 3);
+    assert.equal(ctx.store.get(key), "");
+    assert.ok(ctx.store.get("discussion_analyzed:-1"));
+  } finally {
+    profiles.close(); registry.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+test("group status and summary commands route explicitly and cannot expose another chat or private profile", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "personal-group-summary-"));
+  const registry = new Store(":memory:"), sent = [];
+  const config = { dataDir: directory, maxProfiles: 2, timeZone: "UTC", vaultKey: "", botUsername: "test_bot" };
+  const telegram = { send: async (id, text) => sent.push({ id, text }),
+    call: async method => method === "getMe" ? { id: 99 } : { status: "administrator" } };
+  const profiles = createProfiles({ config, registry, telegram });
+  const router = createRouter({ config, registry, profiles, telegram });
+  const message = (id, chat, text, type="group") => ({ update_id:id, message: {
+    message_id:id, from:{ id:1 }, chat:{ id:chat,type }, text,
+  } });
+  try {
+    const ctx = profiles.register({ id:1 });
+    profiles.subscribe(-1, 1); profiles.subscribe(-2, 1);
+    ctx.knowledge.observe(-1, 1, 1, "Согласовали релиз");
+    ctx.knowledge.observe(-2, 1, 1, "Другой проект");
+    ctx.knowledge.observe("private", 1, 1, "Личная заметка");
+    ctx.skills.answer = async (chat, text) => {
+      assert.equal(chat, -1);
+      assert.match(text, /Составь сводку/);
+      return "Релиз согласован";
+    };
+    await router.handle(message(10, -1, "/summary@test_bot"));
+    assert.equal(sent.at(-1).text, "Релиз согласован");
+    assert.equal(ctx.knowledge.discussion(-1).length, 1);
+    await router.handle(message(11, -1, "/status@test_bot"));
+    assert.match(sent.at(-1).text, /Получение обычных сообщений: разрешено/);
+    assert.doesNotMatch(sent.at(-1).text, /Личка|Группа -2|Подключено групп/);
+    ctx.skills.answer = async chat => { assert.equal(chat,null); return "Личная сводка"; };
+    await router.handle(message(12, 1, "/summary@test_bot", "private"));
+    assert.equal(sent.at(-1).text, "Личная сводка");
+    profiles.subscribe(-3, 1);
+    await router.handle(message(13, -3, "/summary@test_bot"));
+    assert.match(sent.at(-1).text, /Пока нет сохранённых/);
+  } finally { profiles.close(); registry.close(); rmSync(directory,{recursive:true,force:true}); }
+});
 test("discussion records deduplicate and retain before/after execution history", () => {
   const store = new Store(":memory:"),
     k = new Knowledge(store);
