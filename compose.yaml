@@ -1,0 +1,18 @@
+services:
+  personal-agent:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    ports:
+      - "127.0.0.1:8092:8092"
+    volumes:
+      - ./data:/data
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 512m
+    cpus: 0.75
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

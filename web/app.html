@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <title>Настройки агента</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="eyebrow">PERSONAL AGENT</span>
+        <h1>Настройки</h1>
+        <p>Ваш помощник, ваши правила.</p>
+      </header>
+      <p id="status" class="status" role="status">
+        Откройте приложение из Telegram для доступа к настройкам.
+      </p>
+      <form id="settings">
+        <fieldset disabled id="fields">
+          <section>
+            <h2>Навыки агента</h2>
+            <label class="toggle"
+              ><span
+                >Память обсуждений<small
+                  >Важные решения с источниками</small
+                ></span
+              ><input name="memoryEnabled" type="checkbox" checked
+            /></label>
+            <label class="toggle"
+              ><span
+                >Планы и история<small
+                  >Задачи, сроки и результаты выполнения</small
+                ></span
+              ><input name="planningEnabled" type="checkbox" checked
+            /></label>
+            <label class="toggle"
+              ><span
+                >Отслеживание встреч<small
+                  >Договорённости, переносы и отмены</small
+                ></span
+              ><input name="meetingTrackingEnabled" type="checkbox"
+            /></label>
+            <p class="hint">
+              Для группы администратор включает обработку командой /track.
+              Встречи меняют ваш календарь только с вашим согласием в обсуждении
+              и при разрешённой записи.
+            </p>
+          </section>
+          <section>
+            <h2>Поведение</h2>
+            <label
+              >Часовой пояс<input
+                name="timeZone"
+                value="Asia/Omsk"
+                list="zones"
+                required
+                maxlength="80" /></label
+            ><datalist id="zones">
+              <option value="Asia/Omsk"></option>
+              <option value="Europe/Moscow"></option>
+              <option value="Asia/Novosibirsk"></option>
+              <option value="Europe/Kaliningrad"></option>
+              <option value="UTC"></option></datalist
+            ><label
+              >Стиль ответов<select name="responseStyle">
+                <option value="brief">Кратко</option>
+                <option selected value="normal">Обычно</option>
+                <option value="detailed">Подробно</option>
+              </select></label
+            ><label
+              >Сообщения другим людям<select name="sendMode">
+                <option value="automatic">Отправлять по моим поручениям</option>
+                <option value="confirm">Сначала показывать черновик</option>
+              </select></label
+            >
+            <p class="hint">
+              Получатели должны сначала запустить бота. Чужие сообщения не
+              становятся командами вашему агенту.
+            </p>
+          </section>
+          <section>
+            <h2>Уведомления</h2>
+            <label class="toggle"
+              ><span
+                >Напоминания о делах<small
+                  >Присылать в ваш личный чат</small
+                ></span
+              ><input name="remindersEnabled" type="checkbox" checked /></label
+            ><label class="toggle"
+              ><span
+                >Входящие сообщения<small
+                  >Уведомлять, когда вам пишут через бота</small
+                ></span
+              ><input name="notifyIncoming" type="checkbox" checked
+            /></label>
+          </section>
+          <section>
+            <h2>Календари</h2>
+            <label
+              >Календарь для встреч<select
+                name="defaultCalendarId"
+                id="default-calendar"
+              >
+                <option value="">Не выбран</option>
+              </select></label
+            >
+            <label class="toggle"
+              ><span
+                >Добавление событий<small
+                  >Разрешить агенту создавать события по вашим поручениям</small
+                ></span
+              ><input name="calendarWriteEnabled" type="checkbox"
+            /></label>
+            <p class="hint">
+              После изменения прав подключите Google повторно. События не
+              создаются одновременно в обоих календарях без вашего поручения.
+            </p>
+            <button class="primary" type="submit">Сохранить настройки</button>
+          </section>
+          <section>
+            <h2>Память</h2>
+            <label
+              >Срок хранения сырой переписки<select name="retentionDays">
+                <option value="7">7 дней</option>
+                <option value="30" selected>30 дней</option>
+                <option value="90">90 дней</option>
+              </select></label
+            >
+            <p class="hint">
+              Не более 80 последних сообщений на обсуждение. Решения и история
+              хранятся отдельно. При достижении лимита запись
+              приостанавливается; важные данные не удаляются молча.
+            </p>
+          </section>
+        </fieldset>
+      </form>
+      <section id="connections">
+        <h2>Подключения</h2>
+        <article class="provider">
+          <div class="mark google">G</div>
+          <div class="provider-copy">
+            <h3>Google Calendar</h3>
+            <span id="google-state">Не подключён</span>
+          </div>
+          <div class="actions">
+            <button data-connect="google" disabled>Подключить</button
+            ><button class="subtle" data-disconnect="google" hidden>
+              Удалить подключение
+            </button>
+          </div>
+        </article>
+        <article class="provider">
+          <div class="mark yandex">Я</div>
+          <div class="provider-copy">
+            <h3>Яндекс Календарь</h3>
+            <span id="yandex-state">Не подключён</span>
+          </div>
+          <div class="actions">
+            <button data-connect="yandex" disabled>Подключить</button
+            ><button class="subtle" data-disconnect="yandex" hidden>
+              Удалить подключение
+            </button>
+          </div>
+        </article>
+        <a id="continue" class="button primary" hidden
+          >Открыть официальный вход</a
+        >
+        <p class="hint">
+          Вход происходит на стороне провайдера. Google может открыть системный
+          браузер; после входа вернитесь к боту.
+        </p>
+        <button id="refresh" class="subtle" disabled>
+          Обновить подключения
+        </button>
+        <details id="caldav">
+          <summary>Яндекс через пароль приложения</summary>
+          <p class="hint">
+            Если OAuth не даёт доступ к календарю, используйте отдельный пароль
+            приложения «Календарь» из Яндекс ID. Основной пароль не вводите.
+          </p>
+          <form id="caldav-form">
+            <label
+              >Логин Яндекса<input
+                name="login"
+                type="text"
+                autocomplete="username"
+                required
+                maxlength="200" /></label
+            ><label
+              >Пароль приложения<input
+                name="password"
+                type="password"
+                autocomplete="off"
+                required
+                minlength="8"
+                maxlength="200" /></label
+            ><button type="submit" disabled>Подключить CalDAV</button>
+          </form>
+        </details>
+      </section>
+      <footer>
+        Доступ к вашему профилю есть только у вас. Подключения можно удалить в
+        любой момент.
+        <button id="export" disabled>Выгрузить решения и историю</button>
+      </footer>
+    </main>
+  </body>
+</html>
