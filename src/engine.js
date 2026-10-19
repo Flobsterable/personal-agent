@@ -12,6 +12,7 @@ export function createEngine({
   authorize = authorizeSideEffect,
   calendar = null,
   knowledge = null,
+  createSettingsLink = null,
   now = () => Date.now(),
 }) {
   const ownerId = String(config.ownerId),
@@ -144,14 +145,17 @@ export function createEngine({
         return ownerSend(
           "Настройки Mini App будут доступны после настройки HTTPS-адреса.",
         );
+      const settingsUrl = createSettingsLink
+        ? createSettingsLink()
+        : config.publicBaseUrl + "/app";
       return ownerSend("Настройки персонального агента", {
         reply_markup: {
           inline_keyboard: [
             ...supportButton.reply_markup.inline_keyboard,
             [
               {
-                text: "Открыть настройки",
-                web_app: { url: config.publicBaseUrl + "/app" },
+                text: "Открыть настройки в браузере",
+                url: settingsUrl,
               },
             ],
           ],

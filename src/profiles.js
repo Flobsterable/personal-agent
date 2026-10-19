@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
 import { Store } from "./store.js";
 import { Knowledge } from "./knowledge.js";
 import { Vault } from "./vault.js";
@@ -13,7 +14,8 @@ import { createSupport } from "./support.js";
 export function createProfiles({ config, registry, telegram }) {
   registry.db
     .exec(`CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY,name TEXT,active INTEGER);
-    CREATE TABLE IF NOT EXISTS subscriptions(chat TEXT,user TEXT,PRIMARY KEY(chat,user));`);
+    CREATE TABLE IF NOT EXISTS subscriptions(chat TEXT,user TEXT,PRIMARY KEY(chat,user));
+    CREATE TABLE IF NOT EXISTS web_tickets(hash TEXT PRIMARY KEY,user TEXT,expires INTEGER);`);
   const contexts = new Map(),
     tickets = new Map(),
     states = new Map();
@@ -67,6 +69,7 @@ export function createProfiles({ config, registry, telegram }) {
       telegram,
       calendar,
       knowledge,
+      createSettingsLink: () => createWebLogin(id),
     });
     const skills = createSkills({
       config: ownConfig,
@@ -141,6 +144,35 @@ export function createProfiles({ config, registry, telegram }) {
         : null,
     };
   }
+  function createWebLogin(id) {
+    id = String(id);
+    if (!known(id) || !config.publicBaseUrl)
+      throw new Error("Web settings unavailable");
+    const now = Date.now();
+    registry.db.prepare("DELETE FROM web_tickets WHERE expires<=?").run(now);
+    if (
+      registry.db.prepare("SELECT count(*) AS n FROM web_tickets").get().n >=
+      100
+    )
+      throw new Error("Too many web sessions");
+    const ticket = randomBytes(32).toString("base64url"),
+      hash = createHash("sha256").update(ticket).digest("hex");
+    registry.db
+      .prepare("INSERT INTO web_tickets VALUES(?,?,?)")
+      .run(hash, id, now + 5 * 60000);
+    return config.publicBaseUrl + "/settings?t=" + ticket;
+  }
+  function redeemWebLogin(ticket) {
+    if (typeof ticket !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(ticket))
+      throw new Error("Invalid web ticket");
+    const hash = createHash("sha256").update(ticket).digest("hex"),
+      entry = registry.db
+        .prepare("DELETE FROM web_tickets WHERE hash=? RETURNING user,expires")
+        .get(hash);
+    if (!entry || entry.expires <= Date.now() || !known(entry.user))
+      throw new Error("Expired web ticket");
+    return entry.user;
+  }
   function subscribe(chat, id) {
     if (!known(id)) throw new Error("Unknown user");
     if (
@@ -171,6 +203,7 @@ export function createProfiles({ config, registry, telegram }) {
       .prepare("UPDATE profiles SET active=0 WHERE id=?")
       .run(String(id));
     registry.unsubscribe(id);
+    registry.db.prepare("DELETE FROM web_tickets WHERE user=?").run(String(id));
     if (contexts.has(String(id))) {
       contexts.get(String(id)).store.close();
       contexts.delete(String(id));
@@ -187,6 +220,8 @@ export function createProfiles({ config, registry, telegram }) {
     register,
     get,
     webContext,
+    createWebLogin,
+    redeemWebLogin,
     oauthRouter,
     subscribe,
     subscribers,

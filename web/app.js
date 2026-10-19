@@ -174,4 +174,8 @@ if (tg?.initData) {
   tg.onEvent("activated", () => {
     if (token) load().catch((e) => message(e.message));
   });
+} else {
+  load()
+    .then(() => message("Настройки открыты по защищённой ссылке из Telegram"))
+    .catch((e) => message(e.message));
 }

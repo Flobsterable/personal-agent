@@ -115,6 +115,28 @@ test("multi-user Mini App sessions cannot select another profile or survive paus
     assert.deepEqual(supportSends, ["2"]);
     assert.equal(profiles.get(1).support.active(), false);
     assert.equal(profiles.get(2).support.active(), true);
+    const login = new URL(profiles.createWebLogin(2));
+    const opened = await fetch(base + login.pathname + login.search, {
+      redirect: "manual",
+    });
+    assert.equal(opened.status, 302);
+    assert.equal(opened.headers.get("location"), "/app");
+    const browserCookie = opened.headers.get("set-cookie").split(";", 1)[0];
+    assert.match(browserCookie, /^pa_session=[a-f0-9]{64}$/);
+    const browserSettings = await (
+      await fetch(base + "/api/settings?user=1", {
+        headers: { Cookie: browserCookie },
+      })
+    ).json();
+    assert.equal(browserSettings.profile.id, "2");
+    assert.equal(
+      (
+        await fetch(base + login.pathname + login.search, {
+          redirect: "manual",
+        })
+      ).status,
+      400,
+    );
     profiles.pause(1);
     assert.equal((await request("/api/support", {}, a.token)).status, 403);
     assert.equal(

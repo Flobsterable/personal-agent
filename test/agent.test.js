@@ -61,6 +61,18 @@ test("owner guard rejects injected instructions and personal commands from other
   );
   assert.ok(f.sends.some((s) => s.chatId === "1" && s.text.includes("/notes")));
 });
+test("settings command opens a one-time browser link", async (t) => {
+  const f = fixture(t);
+  const e = createEngine({
+    ...f,
+    config: { ...f.config, publicBaseUrl: "https://agent.example" },
+    createSettingsLink: () => "https://agent.example/settings?t=one-time",
+  });
+  await e.handle(update(1, 1, "/settings"));
+  const button = f.sends[0].extra.reply_markup.inline_keyboard[1][0];
+  assert.equal(button.url, "https://agent.example/settings?t=one-time");
+  assert.equal(button.web_app, undefined);
+});
 test("message draft never sends automatically; only owner can approve once", async (t) => {
   const f = fixture(t);
   f.store.register({ id: 2, first_name: "Recipient" });

@@ -37,6 +37,20 @@ export function createMiniAppServer({
   now = () => Date.now(),
 }) {
   const sessions = new Map();
+  const issueSession = (id) => {
+    for (const [key, value] of sessions)
+      if (value.expires <= now()) sessions.delete(key);
+    if (sessions.size >= 50) throw new Error("Too many sessions");
+    const token = randomBytes(32).toString("hex");
+    sessions.set(token, { expires: now() + 15 * 60000, id: String(id) });
+    return token;
+  };
+  const cookie = (req, name) =>
+    (req.headers.cookie || "")
+      .split(";")
+      .map((value) => value.trim())
+      .find((value) => value.startsWith(name + "="))
+      ?.slice(name.length + 1);
   return createServer(async (req, res) => {
     const headers = {
       "Cache-Control": "no-store",
@@ -76,6 +90,18 @@ export function createMiniAppServer({
       }
       if (req.method === "GET" && url.pathname === "/health")
         return send(200, { status: "ok" });
+      if (req.method === "GET" && url.pathname === "/settings") {
+        if (!profiles) return send(404, "Not found", "text/plain");
+        const id = profiles.redeemWebLogin(url.searchParams.get("t")),
+          token = issueSession(id);
+        return send(302, "", "text/plain", {
+          Location: "/app",
+          "Set-Cookie":
+            "pa_session=" +
+            token +
+            "; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=900",
+        });
+      }
       if (url.pathname === "/oauth/start" && req.method === "GET") {
         const start = oauth.start(url.searchParams.get("ticket"));
         return send(302, "", "text/plain", {
@@ -85,12 +111,12 @@ export function createMiniAppServer({
       }
       if (url.pathname.startsWith("/oauth/callback/") && req.method === "GET") {
         const provider = url.pathname.split("/").at(-1),
-          cookie = (req.headers.cookie || "")
-            .split(";")
-            .map((x) => x.trim())
-            .find((x) => x.startsWith("pa_oauth="))
-            ?.slice(9);
-        const result = await oauth.callback(provider, url.searchParams, cookie);
+          browser = cookie(req, "pa_oauth");
+        const result = await oauth.callback(
+          provider,
+          url.searchParams,
+          browser,
+        );
         const username = /^[A-Za-z0-9_]{5,32}$/.test(config.botUsername || "")
           ? config.botUsername
           : null;
@@ -137,19 +163,15 @@ export function createMiniAppServer({
           return send(403, {
             error: "Сначала нажмите /start в личном чате бота.",
           });
-        if (sessions.size >= 50)
-          return send(429, { error: "Too many sessions" });
-        const token = randomBytes(32).toString("hex");
-        sessions.set(token, { expires: now() + 15 * 60000, id: user.id });
+        const token = issueSession(user.id);
         return send(200, { token });
       }
-      if (
-        !sessions.has((req.headers.authorization || "").replace(/^Bearer /, ""))
-      )
+      const sessionToken =
+        (req.headers.authorization || "").replace(/^Bearer /, "") ||
+        cookie(req, "pa_session");
+      if (!sessions.has(sessionToken))
         return send(401, { error: "Откройте настройки заново из Telegram." });
-      const session = sessions.get(
-        (req.headers.authorization || "").replace(/^Bearer /, ""),
-      );
+      const session = sessions.get(sessionToken);
       if (profiles && !profiles.known(session.id))
         return send(403, { error: "Профиль приостановлен." });
       const context = profiles
