@@ -1,4 +1,5 @@
 import { importDiscussion } from "./import.js";
+import { supportButton } from "./support.js";
 export function createRouter({ config, registry, profiles, telegram }) {
   let lastMaintenance = 0,
     importCache = null;
@@ -47,10 +48,13 @@ export function createRouter({ config, registry, profiles, telegram }) {
         try {
           const ctx = profiles.register(sender);
           ctx.store.set("owner_chat", id);
+          ctx.store.set("support_active", "");
+          ctx.store.set("support_history", "");
           await menu(id);
           await telegram.send(
             id,
-            "Ваш профиль создан. Я веду задачи, заметки, встречи и планы. /settings — настроить навыки и подключить календари. В группе: /track — начать учитывать обсуждение, /untrack — остановить. /plan и /history — планы и история. Для старой переписки отправьте JSON-экспорт Telegram Desktop файлом. /stop — приостановить профиль.",
+            "Ваш профиль создан. Я веду задачи, заметки, встречи и планы. /settings — настроить навыки и подключить календари. В группе: /track — начать учитывать обсуждение, /untrack — остановить. /plan и /history — планы и история. Для старой переписки отправьте JSON-экспорт Telegram Desktop файлом. /support — написать в AI-поддержку. /stop — приостановить профиль.",
+            supportButton,
           );
           if (text === "/start settings")
             await ctx.engine.handle({
@@ -93,6 +97,37 @@ export function createRouter({ config, registry, profiles, telegram }) {
       }
       const ctx = profiles.get(id);
       if (privateChat) {
+        if (cb?.data?.startsWith("support:")) {
+          await telegram.call("answerCallbackQuery", {
+            callback_query_id: cb.id,
+          });
+          if (cb.data === "support:start") return ctx.support.start();
+          if (cb.data === "support:stop") return ctx.support.stop();
+          return;
+        }
+        if (command === "/support") return ctx.support.start();
+        if (command === "/back") return ctx.support.stop();
+        if (command === "/clearhistory") {
+          ctx.store.set("support_history", "");
+        }
+        if (ctx.support.active() && m && !update.edited_message) {
+          if (!command.startsWith("/")) {
+            if (m.text) return ctx.support.answer(text);
+            return telegram.send(
+              id,
+              "Опишите проблему текстом. /back — вернуться к агенту.",
+            );
+          }
+        }
+        // Only update previously observed discussion messages. Support messages
+        // were never observed, including after the user leaves support mode.
+        if (
+          update.edited_message &&
+          !ctx.knowledge
+            .discussion("private")
+            .some((row) => row.msg === m.message_id)
+        )
+          return;
         profiles.syncContacts(ctx);
         if (m?.document) {
           if (!m.document.file_name?.endsWith(".json"))

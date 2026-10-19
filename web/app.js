@@ -57,10 +57,24 @@ async function load() {
     );
   }
   fields.disabled = false;
+  document.querySelector("#support").disabled = false;
   document.querySelector("#export").disabled = false;
   document.querySelector("#refresh").disabled = false;
   document.querySelector("#caldav-form button").disabled = false;
 }
+document.querySelector("#support").onclick = async () => {
+  const button = document.querySelector("#support");
+  button.disabled = true;
+  try {
+    await api("/api/support", {});
+    message("AI-поддержка открыта. Напишите вопрос в личном чате бота.");
+    tg?.close();
+  } catch (e) {
+    message(e.message);
+  } finally {
+    button.disabled = false;
+  }
+};
 document.querySelector("#export").onclick = async () => {
   try {
     const data = await api("/api/export", null, "GET");

@@ -157,6 +157,12 @@ export function createMiniAppServer({
         : { store, oauth, config };
       const ownStore = context.store,
         ownOAuth = context.oauth;
+      if (url.pathname === "/api/support" && req.method === "POST") {
+        if (!context.support)
+          return send(503, { error: "Поддержка недоступна." });
+        await context.support.start();
+        return send(200, { ok: true });
+      }
       if (url.pathname === "/api/export" && req.method === "GET")
         return send(200, context.knowledge?.export() || {});
       if (url.pathname === "/api/settings" && req.method === "GET")
